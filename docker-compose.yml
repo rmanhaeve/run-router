@@ -1,14 +1,7 @@
 services:
-  backend:
-    build: backend
+  app:
+    build: .
     environment:
       - ORS_API_KEY=${ORS_API_KEY}
     ports:
       - "8000:8000"
-
-  frontend:
-    build: frontend
-    ports:
-      - "8080:80"
-    depends_on:
-      - backend

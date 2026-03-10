@@ -43,7 +43,15 @@ All routing data comes from [OpenRouteService](https://openrouteservice.org/) (b
 
 ## Setup
 
-### Prerequisites
+### Docker (recommended)
+
+```bash
+ORS_API_KEY="your-key-here" docker compose up --build
+```
+
+Open http://localhost:8000.
+
+### Prerequisites (local dev)
 
 - Python 3.10+, [uv](https://docs.astral.sh/uv/)
 - Node.js 18+
@@ -67,7 +75,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173, click the map to set a start, adjust preferences, and hit **Generate Routes**.
+Open http://localhost:5173 (Vite dev server proxies `/api` to the backend).
 
 ## Project structure
 

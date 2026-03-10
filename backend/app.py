@@ -12,15 +12,19 @@ import os
 import json
 import asyncio
 import logging
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from models import GenerateRequest
 from engine.ors_client import ORSClient
 from engine.generator import generate_routes
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="Circular Route Generator")
 
@@ -129,6 +133,19 @@ async def export_gpx(req: dict):
         media_type="application/gpx+xml",
         headers={"Content-Disposition": f'attachment; filename="{name}.gpx"'},
     )
+
+
+# Serve frontend static files (when built into /app/static by the Dockerfile)
+if STATIC_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """SPA fallback — serve index.html for any non-API, non-asset path."""
+        file = STATIC_DIR / full_path
+        if file.is_file():
+            return FileResponse(file)
+        return FileResponse(STATIC_DIR / "index.html")
 
 
 if __name__ == "__main__":
