@@ -19,7 +19,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 TRAVEL_MODES = {
-    "drive": "driving-car",
     "cycle": "cycling-regular",
     "walk": "foot-walking",
 }

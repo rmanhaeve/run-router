@@ -12,7 +12,7 @@ Original source: https://zenodo.org/doi/10.5281/zenodo.8154412
 
 import copy
 import logging
-from . import distance, polygons, graph, scoring
+from . import distance, polygons, graph, scoring, local_search
 from .ors_client import ORSClient, parse_route_response, remove_self_loops, remove_back_and_forths
 
 logger = logging.getLogger(__name__)
@@ -171,6 +171,64 @@ async def _fetch_round_trip_routes(ors_client, source, target_distance, mode,
     return sol_list
 
 
+def _waypoint_at_bearing(source, bearing_deg, dist_meters):
+    """Compute a GPS point at a given bearing and distance from source."""
+    import math
+    lat1 = math.radians(source[1])
+    lon1 = math.radians(source[0])
+    bearing = math.radians(bearing_deg)
+    R = 6378137.0  # Earth radius in meters
+    d = dist_meters / R
+
+    lat2 = math.asin(
+        math.sin(lat1) * math.cos(d) +
+        math.cos(lat1) * math.sin(d) * math.cos(bearing)
+    )
+    lon2 = lon1 + math.atan2(
+        math.sin(bearing) * math.sin(d) * math.cos(lat1),
+        math.cos(d) - math.sin(lat1) * math.sin(lat2)
+    )
+    return [math.degrees(lon2), math.degrees(lat2)]
+
+
+async def _fetch_directional_routes(ors_client, source, target_distance, mode,
+                                     weight, surface, green, height,
+                                     bearings=None):
+    """Generate routes by placing waypoints in specific compass directions.
+
+    For each bearing, creates a waypoint at ~1/4 target distance in that direction,
+    then requests a route: source -> waypoint -> source. This ensures candidate
+    routes explore different geographic areas with potentially different terrain.
+    """
+    if bearings is None:
+        bearings = [0, 45, 90, 135, 180, 225, 270, 315]
+
+    sol_list = []
+    wp_dist = target_distance / 4  # waypoint at 1/4 total distance from start
+
+    for bearing in bearings:
+        wp = _waypoint_at_bearing(source, bearing, wp_dist)
+        coords = [source, wp, source]
+        try:
+            data = await ors_client.get_directions(coords, mode)
+            route, wps, wp_indices = parse_route_response(
+                data, weight, surface, green, height, mode
+            )
+            route = remove_self_loops(route)
+            if len(route) > 2:
+                route_len = distance.gps_crow_path_dist(route, weight)
+                overlap = distance.get_overlap_dist_orig_graph(route, weight)
+                sol_list.append({
+                    "route": route,
+                    "length": route_len,
+                    "overlap_pct": (overlap / route_len * 100) if route_len > 0 else 0,
+                })
+        except Exception as e:
+            logger.warning(f"Directional route bearing={bearing} failed: {e}")
+
+    return sol_list
+
+
 async def generate_routes(
     source: list,
     target_distance: int,
@@ -186,8 +244,11 @@ async def generate_routes(
 ):
     """Generate circular routes and return scored results.
 
-    Uses a hybrid approach: both the isochrone-polygon method AND ORS round_trip
-    with multiple seeds, then deduplicates and scores all candidates.
+    Uses a hybrid approach:
+    1. Generate candidates via isochrone-polygon and ORS round_trip
+    2. Build smooth graph from all candidates
+    3. Run multi-objective local search to explore better routes
+    4. Score, deduplicate, and return results
     """
     if preferences is None:
         preferences = {}
@@ -238,9 +299,9 @@ async def generate_routes(
         sol_list.extend(polygon_sols)
         logger.info(f"Polygon method produced {len(polygon_sols)} routes")
 
-    await progress("Fetching diverse alternatives", 55)
+    await progress("Fetching diverse alternatives", 45)
 
-    # 3b: ORS round_trip with multiple seeds (always — this is the diversity source)
+    # 3b: ORS round_trip with multiple seeds
     num_seeds = max(3, iterations + 2)
     round_trip_sols = await _fetch_round_trip_routes(
         ors_client, source, target_distance, mode,
@@ -249,14 +310,90 @@ async def generate_routes(
     sol_list.extend(round_trip_sols)
     logger.info(f"Round trip method produced {len(round_trip_sols)} routes")
 
+    await progress("Exploring all directions", 55)
+
+    # 3c: Directional routes — ensures candidates cover all compass directions
+    # so different terrain (hilly vs flat areas) is represented in the pool
+    directional_sols = await _fetch_directional_routes(
+        ors_client, source, target_distance, mode,
+        weight, surface, green, height
+    )
+    sol_list.extend(directional_sols)
+    logger.info(f"Directional method produced {len(directional_sols)} routes")
+
     if len(sol_list) == 0:
         raise ValueError("No routes could be generated. Try a different location or distance.")
 
-    await progress("Scoring and ranking", 75)
+    await progress("Optimizing routes", 65)
 
-    # Step 4: Score all routes
+    # Step 4: Build smooth graph and run local search
+    # Filter to valid circular routes
+    valid_routes = [
+        sol["route"] for sol in sol_list
+        if len(sol["route"]) > 2 and sol["route"][0] == sol["route"][-1]
+    ]
+
+    optimized_sol_list = list(sol_list)  # start with originals
+
+    if len(valid_routes) >= 1:
+        try:
+            smooth_g, W, segments, double_arc_set, coords_to_num, num_to_coords = (
+                graph.get_smooth_graph(valid_routes, weight)
+            )
+
+            seg_metrics = graph.compute_segment_metrics(
+                segments, coords_to_num, weight, height, surface, green
+            )
+
+            # Convert solutions to smooth graph vertex sequences
+            initial_smooth = []
+            for route in valid_routes:
+                sol_smooth = [0]  # source is always vertex 0
+                for j in range(1, len(route)):
+                    pt = route[j]
+                    if pt in coords_to_num:
+                        num = coords_to_num[pt]
+                        if sol_smooth[-1] != num:
+                            sol_smooth.append(num)
+                if len(sol_smooth) >= 3 and sol_smooth[-1] == 0:
+                    initial_smooth.append(sol_smooth)
+
+            if initial_smooth:
+                await progress("Running local search", 70)
+
+                optimized = local_search.multi_objective_local_search(
+                    smooth_g, W, segments, double_arc_set,
+                    coords_to_num, num_to_coords,
+                    seg_metrics,
+                    target_distance, preferences,
+                    initial_smooth,
+                )
+
+                # Reconstruct GPS routes from optimized smooth graph solutions
+                for opt_sol in optimized:
+                    try:
+                        route = graph.reconstruct_route(opt_sol, segments, num_to_coords)
+                        if len(route) > 2:
+                            route_len = distance.gps_crow_path_dist(route, weight)
+                            overlap = distance.get_overlap_dist_orig_graph(route, weight)
+                            optimized_sol_list.append({
+                                "route": route,
+                                "length": route_len,
+                                "overlap_pct": (overlap / route_len * 100) if route_len > 0 else 0,
+                            })
+                    except Exception as e:
+                        logger.warning(f"Route reconstruction failed: {e}")
+
+                logger.info(f"Local search added {len(optimized)} optimized routes")
+
+        except Exception as e:
+            logger.warning(f"Local search failed, using original candidates: {e}")
+
+    await progress("Scoring and ranking", 85)
+
+    # Step 5: Score all routes (originals + optimized)
     scored = []
-    for sol in sol_list:
+    for sol in optimized_sol_list:
         route = sol["route"]
         if len(route) < 3:
             continue
@@ -273,13 +410,13 @@ async def generate_routes(
     # Sort by score descending
     scored.sort(key=lambda r: r["score"], reverse=True)
 
-    # Step 5: Deduplicate similar routes (keep best-scored variant)
+    # Step 6: Deduplicate similar routes (keep best-scored variant)
     scored = _deduplicate_routes(scored, threshold=0.80)
     logger.info(f"After dedup: {len(scored)} unique routes")
 
-    await progress("Building profiles", 90)
+    await progress("Building profiles", 95)
 
-    # Step 6: Build final results
+    # Step 7: Build final results
     results = []
     for i, sol in enumerate(scored):
         route = sol["route"]

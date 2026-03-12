@@ -34,7 +34,7 @@ export default function App() {
   const handleGenerate = useCallback(
     async (
       distanceM: number,
-      mode: "walk" | "cycle" | "drive",
+      mode: "walk" | "cycle",
       preferences: Preferences
     ) => {
       if (!startLocation) {

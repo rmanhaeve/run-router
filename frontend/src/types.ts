@@ -47,7 +47,7 @@ export interface GenerateResult {
 export interface GenerateRequest {
   start: [number, number];
   distance_m: number;
-  mode: "walk" | "cycle" | "drive";
+  mode: "walk" | "cycle";
   preferences: Preferences;
   algorithm: number;
   iterations: number;
