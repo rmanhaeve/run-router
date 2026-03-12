@@ -33,6 +33,7 @@ interface Props {
   initialMapView: { lat: number; lng: number; zoom: number } | null;
   onMapClick: (lon: number, lat: number) => void;
   onMapMoved: (lat: number, lng: number, zoom: number) => void;
+  hoveredPointIndex?: number | null;
 }
 
 export default function RouteMap({
@@ -43,6 +44,7 @@ export default function RouteMap({
   initialMapView,
   onMapClick,
   onMapMoved,
+  hoveredPointIndex,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -50,7 +52,8 @@ export default function RouteMap({
     marker: L.Marker | null;
     isochrone: L.Polygon | null;
     routes: L.Polyline[];
-  }>({ marker: null, isochrone: null, routes: [] });
+    hoverMarker: L.CircleMarker | null;
+  }>({ marker: null, isochrone: null, routes: [], hoverMarker: null });
 
   // Initialize map — restore saved view or use default
   useEffect(() => {
@@ -172,6 +175,32 @@ export default function RouteMap({
 
     map.fitBounds(bounds, { padding: [30, 30] });
   }, [routes, selectedRoute]);
+
+  // Elevation profile hover marker
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (layersRef.current.hoverMarker) {
+      layersRef.current.hoverMarker.remove();
+      layersRef.current.hoverMarker = null;
+    }
+
+    if (hoveredPointIndex == null || !selectedRoute) return;
+
+    const coord = selectedRoute.coordinates[hoveredPointIndex];
+    if (!coord) return;
+
+    const [lon, lat] = coord;
+    layersRef.current.hoverMarker = L.circleMarker([lat, lon], {
+      radius: 7,
+      color: "#fff",
+      weight: 2,
+      fillColor: ROUTE_COLORS[selectedRoute.id % ROUTE_COLORS.length],
+      fillOpacity: 1,
+      interactive: false,
+    }).addTo(map);
+  }, [hoveredPointIndex, selectedRoute]);
 
   const handleLocate = () => {
     mapRef.current?.locate({ setView: false, maxZoom: 14 });

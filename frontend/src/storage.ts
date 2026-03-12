@@ -14,7 +14,7 @@ const DEFAULTS: StoredSettings = {
   startLocation: null,
   distanceKm: 5,
   mode: "walk",
-  preferences: { hilly: 50, offroad: 50, repetition: 0, green: 50 },
+  preferences: { hilly: 50, offroad: 50, repetition: 0, crossings: 0, tradeoff: 50 },
   mapView: null,
 };
 
@@ -25,6 +25,11 @@ export function loadSettings(): StoredSettings {
     const parsed = { ...DEFAULTS, ...JSON.parse(raw) };
     // Migrate: if stored mode was "drive", reset to "walk"
     if (parsed.mode === "drive") parsed.mode = "walk";
+    // Migrate: add tradeoff if missing from stored preferences
+    if (parsed.preferences.tradeoff === undefined) parsed.preferences.tradeoff = 50;
+    // Migrate: replace green with crossings
+    if ((parsed.preferences as any).green !== undefined) delete (parsed.preferences as any).green;
+    if (parsed.preferences.crossings === undefined) parsed.preferences.crossings = 0;
     return parsed;
   } catch {
     return DEFAULTS;

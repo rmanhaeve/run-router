@@ -2,6 +2,6 @@ services:
   app:
     build: .
     environment:
-      - ORS_API_KEY=${ORS_API_KEY}
+      - VALHALLA_URL=${VALHALLA_URL:-http://localhost:8002}
     ports:
       - "8000:8000"

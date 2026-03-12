@@ -29,8 +29,6 @@ def _get_path_segment_totals(path, seg_metrics, W):
     climb = 0
     unpaved = 0
     paved = 0
-    green_s = 0
-    green_d = 0
     for i in range(len(path) - 1):
         edge = (path[i], path[i + 1])
         sm = seg_metrics.get(edge)
@@ -39,19 +37,16 @@ def _get_path_segment_totals(path, seg_metrics, W):
             climb += sm["climb"]
             unpaved += sm["unpaved_dist"]
             paved += sm["paved_dist"]
-            green_s += sm["green_sum"]
-            green_d += sm["green_dist"]
         else:
             length += W.get(edge, 0)
-    return length, climb, unpaved, paved, green_s, green_d
+    return length, climb, unpaved, paved
 
 
-def _totals_to_metrics(length, climb, unpaved, paved, green_s, green_d, overlap_pct):
+def _totals_to_metrics(length, climb, unpaved, paved, overlap_pct):
     """Convert raw totals into a metrics dict compatible with scoring."""
     climb_per_km = (climb / (length / 1000)) if length > 0 else 0
     offroad_pct = (unpaved / length * 100) if length > 0 else 0
     paved_pct_val = (paved / length * 100) if length > 0 else 0
-    avg_green = (green_s / green_d) if green_d > 0 else 5
     return {
         "length": round(length),
         "climb": round(climb),
@@ -59,19 +54,22 @@ def _totals_to_metrics(length, climb, unpaved, paved, green_s, green_d, overlap_
         "overlap_pct": round(overlap_pct, 1),
         "offroad_pct": round(offroad_pct, 1),
         "paved_pct": round(paved_pct_val, 1),
-        "avg_green": round(avg_green, 1),
     }
 
 
 def _cost_vector(C, seg_metrics, W, double_arc_set, target_distance, preferences):
-    """Compute cost vector [length_error, -preference_score]."""
-    length, climb, unpaved, paved, gs, gd = _get_path_segment_totals(C, seg_metrics, W)
+    """Compute cost vector [length_error_pct, -preference_score].
+
+    Both dimensions are on a 0-100 scale so the Pareto archive and pruning
+    treat distance accuracy and preference satisfaction equally.
+    """
+    length, climb, unpaved, paved = _get_path_segment_totals(C, seg_metrics, W)
     overlap_dist = distance.get_overlap_dist_smoothed(C, W, double_arc_set)
     overlap_pct = (overlap_dist / length * 100) if length > 0 else 0
-    metrics = _totals_to_metrics(length, climb, unpaved, paved, gs, gd, overlap_pct)
+    metrics = _totals_to_metrics(length, climb, unpaved, paved, overlap_pct)
     pref_score = scoring.score_route_preferences(metrics, preferences)
-    length_error = abs(metrics["length"] - target_distance)
-    return [length_error, -pref_score]
+    length_error_pct = abs(metrics["length"] - target_distance) / target_distance * 100 if target_distance > 0 else 0
+    return [length_error_pct, -pref_score]
 
 
 def _bfs(adj, start, excluded_edges):
@@ -245,7 +243,7 @@ def multi_objective_local_search(
             C_edges.add((C[i], C[i + 1]))
 
         # Precompute cumulative segment totals along C
-        cum = {"length": [0], "climb": [0], "unpaved": [0], "paved": [0], "gs": [0], "gd": [0]}
+        cum = {"length": [0], "climb": [0], "unpaved": [0], "paved": [0]}
         for i in range(len(C) - 1):
             edge = (C[i], C[i + 1])
             sm = seg_metrics.get(edge, {})
@@ -253,8 +251,6 @@ def multi_objective_local_search(
             cum["climb"].append(cum["climb"][-1] + sm.get("climb", 0))
             cum["unpaved"].append(cum["unpaved"][-1] + sm.get("unpaved_dist", 0))
             cum["paved"].append(cum["paved"][-1] + sm.get("paved_dist", 0))
-            cum["gs"].append(cum["gs"][-1] + sm.get("green_sum", 0))
-            cum["gd"].append(cum["gd"][-1] + sm.get("green_dist", 0))
 
         totals = {k: v[-1] for k, v in cum.items()}
 
@@ -273,7 +269,7 @@ def multi_objective_local_search(
                     continue
 
                 new_path = _reconstruct_path(parent, u, v)
-                p_len, p_climb, p_unpaved, p_paved, p_gs, p_gd = \
+                p_len, p_climb, p_unpaved, p_paved = \
                     _get_path_segment_totals(new_path, seg_metrics, W)
 
                 # Subtract old segment, add new path
@@ -284,8 +280,6 @@ def multi_objective_local_search(
                 new_climb = totals["climb"] - (cum["climb"][vPos] - cum["climb"][uPos]) + p_climb
                 new_unpaved = totals["unpaved"] - (cum["unpaved"][vPos] - cum["unpaved"][uPos]) + p_unpaved
                 new_paved = totals["paved"] - (cum["paved"][vPos] - cum["paved"][uPos]) + p_paved
-                new_gs = totals["gs"] - (cum["gs"][vPos] - cum["gs"][uPos]) + p_gs
-                new_gd = totals["gd"] - (cum["gd"][vPos] - cum["gd"][uPos]) + p_gd
 
                 new_C = list(C[:uPos]) + new_path + list(C[vPos + 1:])
 
@@ -293,7 +287,7 @@ def multi_objective_local_search(
                 overlap_pct = (overlap_dist / new_length * 100) if new_length > 0 else 0
 
                 metrics = _totals_to_metrics(
-                    new_length, new_climb, new_unpaved, new_paved, new_gs, new_gd, overlap_pct
+                    new_length, new_climb, new_unpaved, new_paved, overlap_pct
                 )
                 pref_score = scoring.score_route_preferences(metrics, preferences)
                 length_error = abs(metrics["length"] - target_distance)
@@ -309,7 +303,7 @@ def multi_objective_local_search(
                 if (x, u) not in C_edges and x in parent and x != u:
                     # Cycle: u -> ... -> x -> u
                     cycle_path = _reconstruct_path(parent, u, x) + [u]
-                    c_len, c_climb, c_unpaved, c_paved, c_gs, c_gd = \
+                    c_len, c_climb, c_unpaved, c_paved = \
                         _get_path_segment_totals(cycle_path, seg_metrics, W)
 
                     new_length = totals["length"] + c_len
@@ -326,8 +320,6 @@ def multi_objective_local_search(
                         totals["climb"] + c_climb,
                         totals["unpaved"] + c_unpaved,
                         totals["paved"] + c_paved,
-                        totals["gs"] + c_gs,
-                        totals["gd"] + c_gd,
                         overlap_pct,
                     )
                     pref_score = scoring.score_route_preferences(metrics, preferences)

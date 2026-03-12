@@ -22,6 +22,8 @@ export default function App() {
   const [progressPct, setProgressPct] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
+  const [hoveredElevIndex, setHoveredElevIndex] = useState<number | null>(null);
+
   const [startLocation, setStartLocation] = useState<[number, number] | null>(
     initial.startLocation
   );
@@ -142,7 +144,7 @@ export default function App() {
               routes={result.routes}
               selectedId={selectedRoute?.id ?? null}
               targetDistance={result.target_distance}
-              onSelect={(r) => setSelectedRoute(r)}
+              onSelect={(r) => { setSelectedRoute(r); setHoveredElevIndex(null); }}
             />
           )}
         </div>
@@ -158,13 +160,14 @@ export default function App() {
               initialMapView={initial.mapView}
               onMapClick={handleMapClick}
               onMapMoved={handleMapMoved}
+              hoveredPointIndex={hoveredElevIndex}
             />
           </div>
 
           {/* Elevation profile */}
           {selectedRoute && (
             <div className="h-48 border-t border-slate-200 bg-white shrink-0">
-              <ElevationProfile route={selectedRoute} />
+              <ElevationProfile route={selectedRoute} onHover={setHoveredElevIndex} />
             </div>
           )}
         </div>

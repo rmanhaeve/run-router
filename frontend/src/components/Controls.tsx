@@ -156,14 +156,46 @@ export default function Controls({
           centerLabel="Some OK"
           rightLabel="Don't care"
         />
-        <PreferenceToggle
-          label="Green space"
-          value={preferences.green}
-          onChange={(v) => updatePref("green", v)}
-          leftLabel="Don't care"
-          centerLabel="Some green"
-          rightLabel="Maximize"
+        <div className="mb-3">
+          <label className="block text-xs font-medium text-slate-600 mb-1">
+            Road crossings
+          </label>
+          <div className="flex gap-1">
+            {([{ val: 0, text: "Don't care" }, { val: 100, text: "Avoid" }] as const).map((opt) => (
+              <button
+                key={opt.val}
+                onClick={() => updatePref("crossings", opt.val)}
+                className={`flex-1 px-2 py-1 text-xs rounded transition ${
+                  preferences.crossings === opt.val
+                    ? "bg-blue-500 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                {opt.text}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Ranking tradeoff */}
+      <div className="mb-4">
+        <label className="block text-sm font-medium text-slate-700 mb-1">
+          Ranking priority
+        </label>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={preferences.tradeoff}
+          onChange={(e) => updatePref("tradeoff", Number(e.target.value))}
+          className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
         />
+        <div className="flex justify-between text-[10px] text-slate-400 mt-0.5">
+          <span>Distance only</span>
+          <span>Ignore distance</span>
+        </div>
       </div>
 
       {/* Generate button */}

@@ -189,22 +189,19 @@ def get_smooth_graph(R, weight):
     return smooth_graph, W, segments, double_arc_set, coords_to_num, num_to_coords
 
 
-def compute_segment_metrics(segments, coords_to_num, weight, height, surface, green):
+def compute_segment_metrics(segments, coords_to_num, weight, height, surface):
     """Compute per-segment metrics for the smooth graph.
 
     Returns dict mapping (u_num, v_num) -> {length, climb, unpaved_dist,
-    paved_dist, green_sum, green_dist} for each segment in the smooth graph.
+    paved_dist} for each segment in the smooth graph.
+    Surface dict stores True=unpaved, False=paved (Valhalla convention).
     """
-    from .scoring import PAVED_SURFACES, UNPAVED_SURFACES
-
     seg_metrics = {}
     for (gps_u, gps_v), seg in segments.items():
         total_length = 0
         total_climb = 0
         paved_dist = 0
         unpaved_dist = 0
-        green_sum = 0
-        green_count = 0
 
         for i in range(len(seg) - 1):
             edge = (seg[i], seg[i + 1])
@@ -216,16 +213,11 @@ def compute_segment_metrics(segments, coords_to_num, weight, height, surface, gr
             if h2 > h1:
                 total_climb += h2 - h1
 
-            s = surface.get(edge, 0)
-            if s in PAVED_SURFACES:
+            s = surface.get(edge)
+            if s is False:
                 paved_dist += edge_len
-            elif s in UNPAVED_SURFACES:
+            elif s is True:
                 unpaved_dist += edge_len
-
-            g = green.get(edge, None)
-            if g is not None:
-                green_sum += g * edge_len
-                green_count += edge_len
 
         u_num = coords_to_num[gps_u]
         v_num = coords_to_num[gps_v]
@@ -234,8 +226,6 @@ def compute_segment_metrics(segments, coords_to_num, weight, height, surface, gr
             "climb": total_climb,
             "paved_dist": paved_dist,
             "unpaved_dist": unpaved_dist,
-            "green_sum": green_sum,
-            "green_dist": green_count,
         }
 
     return seg_metrics

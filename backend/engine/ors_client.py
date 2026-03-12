@@ -77,7 +77,7 @@ class ORSClient:
         bearing = distance.get_bearing(source[0], source[1], furthest[0], furthest[1])
         return max_dist, bearing
 
-    async def get_directions(self, coords, mode="walk"):
+    async def get_directions(self, coords, mode="walk", preference="recommended"):
         """Get a route through waypoints. Returns raw ORS GeoJSON response."""
         profile = self._profile(mode)
         url = f"{ORS_BASE}/directions/{profile}/geojson"
@@ -85,7 +85,7 @@ class ORSClient:
             "coordinates": coords,
             "continue_straight": "false",
             "elevation": "true",
-            "preference": "recommended",
+            "preference": preference,
             "radiuses": -1,
             "geometry": "true",
             "extra_info": ["surface", "green"],

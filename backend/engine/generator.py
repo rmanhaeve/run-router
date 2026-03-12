@@ -13,7 +13,7 @@ Original source: https://zenodo.org/doi/10.5281/zenodo.8154412
 import copy
 import logging
 from . import distance, polygons, graph, scoring, local_search
-from .ors_client import ORSClient, parse_route_response, remove_self_loops, remove_back_and_forths
+from .valhalla_client import ValhallaClient, remove_self_loops, remove_back_and_forths
 
 logger = logging.getLogger(__name__)
 
@@ -70,94 +70,24 @@ def _deduplicate_routes(sol_list, threshold=0.85):
     return kept
 
 
-async def _fetch_polygon_routes(ors_client, polygon_list, polygon_points, mode,
-                                 remove_backtracks, weight, surface, green, height):
+async def _fetch_polygon_routes(valhalla_client, polygon_list, polygon_points, mode,
+                                 remove_backtracks, weight, surface, height,
+                                 use_hills=0.5, crossing_cost=2.0):
     """Fetch routes using the isochrone-polygon method. Returns list of solution dicts."""
     sol_list = []
-    n = polygon_points
-    polygons_per_call = (MAX_WP - 1) // n
 
-    # Process in batches
-    for j in range(0, len(polygon_list), polygons_per_call):
-        sub_list = polygon_list[j:j + polygons_per_call]
-        coords = []
-        for poly in sub_list:
-            coords += copy.deepcopy(poly["estimated_wps"])
-        coords.append(sub_list[0]["estimated_wps"][0])
+    for poly in polygon_list:
+        coords = list(copy.deepcopy(poly["estimated_wps"]))
+        coords.append(coords[0])  # close the loop
 
         try:
-            data = await ors_client.get_directions(coords, mode)
-            full_coords_3d = data["features"][0]["geometry"]["coordinates"]
-            full_route = []
-            for el in full_coords_3d:
-                pt = (el[0], el[1])
-                full_route.append(pt)
-                height[pt] = el[2]
-            for k_idx in range(len(full_route) - 1):
-                weight[(full_route[k_idx], full_route[k_idx + 1])] = distance.gps_crow_dist(
-                    full_route[k_idx], full_route[k_idx + 1],
-                    height[full_route[k_idx]], height[full_route[k_idx + 1]]
-                )
-            # Surface
-            for el in data["features"][0]["properties"]["extras"]["surface"]["values"]:
-                for si in range(el[0], el[1]):
-                    if si + 1 < len(full_route):
-                        surface[(full_route[si], full_route[si + 1])] = el[2]
-            # Green
-            if mode == "walk":
-                try:
-                    for el in data["features"][0]["properties"]["extras"]["green"]["values"]:
-                        for si in range(el[0], el[1]):
-                            if si + 1 < len(full_route):
-                                green[(full_route[si], full_route[si + 1])] = el[2]
-                except KeyError:
-                    pass
-
-            # Split into sub-routes at every n-th waypoint
-            wp_indices = data["features"][0]["properties"]["way_points"]
-            split_points = [wp_indices[i_wp] for i_wp in range(0, len(wp_indices), n)]
-
-            all_wps = [full_route[wp_indices[i_wp]] for i_wp in range(len(wp_indices) - 1)]
-            wps_list = []
-            cnt = 0
-            for si in range(len(split_points) - 1):
-                wp = []
-                for _ in range(n):
-                    if cnt < len(all_wps):
-                        wp.append(all_wps[cnt])
-                        cnt += 1
-                wps_list.append(wp)
-
-            for si in range(len(split_points) - 1):
-                sub_route = list(full_route[split_points[si]:split_points[si + 1]])
-                if len(sub_route) > 1:
-                    sub_route.append(sub_route[0])
-                    sub_route = remove_self_loops(sub_route)
-                    if remove_backtracks and si < len(wps_list):
-                        sub_route, _ = remove_back_and_forths(sub_route, wps_list[si])
-                    if len(sub_route) > 2:
-                        route_len = distance.gps_crow_path_dist(sub_route, weight)
-                        overlap = distance.get_overlap_dist_orig_graph(sub_route, weight)
-                        sol_list.append({
-                            "route": sub_route,
-                            "length": route_len,
-                            "overlap_pct": (overlap / route_len * 100) if route_len > 0 else 0,
-                        })
-        except Exception as e:
-            logger.warning(f"Polygon route batch failed: {e}")
-
-    return sol_list
-
-
-async def _fetch_round_trip_routes(ors_client, source, target_distance, mode,
-                                    num_seeds, weight, surface, green, height):
-    """Fetch routes using ORS round_trip with multiple seeds. Returns list of solution dicts."""
-    sol_list = []
-    for seed in range(1, num_seeds + 1):
-        try:
-            data = await ors_client.get_round_trip(source, target_distance, 3, mode, seed)
-            route, wps, wp_indices = parse_route_response(data, weight, surface, green, height, mode)
+            route, wps, wp_indices = await valhalla_client.get_directions(
+                coords, mode, use_hills=use_hills, crossing_cost=crossing_cost,
+                weight=weight, surface=surface, height=height
+            )
             route = remove_self_loops(route)
+            if remove_backtracks:
+                route, _ = remove_back_and_forths(route, wps)
             if len(route) > 2:
                 route_len = distance.gps_crow_path_dist(route, weight)
                 overlap = distance.get_overlap_dist_orig_graph(route, weight)
@@ -167,7 +97,8 @@ async def _fetch_round_trip_routes(ors_client, source, target_distance, mode,
                     "overlap_pct": (overlap / route_len * 100) if route_len > 0 else 0,
                 })
         except Exception as e:
-            logger.warning(f"Round trip seed {seed} failed: {e}")
+            logger.warning(f"Polygon route failed: {e}")
+
     return sol_list
 
 
@@ -191,9 +122,9 @@ def _waypoint_at_bearing(source, bearing_deg, dist_meters):
     return [math.degrees(lon2), math.degrees(lat2)]
 
 
-async def _fetch_directional_routes(ors_client, source, target_distance, mode,
-                                     weight, surface, green, height,
-                                     bearings=None):
+async def _fetch_directional_routes(valhalla_client, source, target_distance, mode,
+                                     weight, surface, height,
+                                     bearings=None, use_hills=0.5, crossing_cost=2.0):
     """Generate routes by placing waypoints in specific compass directions.
 
     For each bearing, creates a waypoint at ~1/4 target distance in that direction,
@@ -201,7 +132,7 @@ async def _fetch_directional_routes(ors_client, source, target_distance, mode,
     routes explore different geographic areas with potentially different terrain.
     """
     if bearings is None:
-        bearings = [0, 45, 90, 135, 180, 225, 270, 315]
+        bearings = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330]
 
     sol_list = []
     wp_dist = target_distance / 4  # waypoint at 1/4 total distance from start
@@ -210,9 +141,9 @@ async def _fetch_directional_routes(ors_client, source, target_distance, mode,
         wp = _waypoint_at_bearing(source, bearing, wp_dist)
         coords = [source, wp, source]
         try:
-            data = await ors_client.get_directions(coords, mode)
-            route, wps, wp_indices = parse_route_response(
-                data, weight, surface, green, height, mode
+            route, wps, wp_indices = await valhalla_client.get_directions(
+                coords, mode, use_hills=use_hills, crossing_cost=crossing_cost,
+                weight=weight, surface=surface, height=height
             )
             route = remove_self_loops(route)
             if len(route) > 2:
@@ -234,7 +165,7 @@ async def generate_routes(
     target_distance: int,
     mode: str = "walk",
     preferences: dict | None = None,
-    ors_client: ORSClient | None = None,
+    valhalla_client: ValhallaClient | None = None,
     num_polygons: int = 3,
     polygon_points: int = 3,
     algorithm: int = 1,
@@ -245,7 +176,7 @@ async def generate_routes(
     """Generate circular routes and return scored results.
 
     Uses a hybrid approach:
-    1. Generate candidates via isochrone-polygon and ORS round_trip
+    1. Generate candidates via isochrone-polygon and directional methods
     2. Build smooth graph from all candidates
     3. Run multi-objective local search to explore better routes
     4. Score, deduplicate, and return results
@@ -255,8 +186,12 @@ async def generate_routes(
 
     weight = {}
     surface = {}
-    green = {}
     height = {}
+
+    # Derive Valhalla costing parameters from preferences
+    use_hills = preferences.get("hilly", 50) / 100  # 0.0–1.0
+    crossings_pref = preferences.get("crossings", 0)
+    crossing_cost = 2.0 + (crossings_pref / 100) * 18.0  # 2.0 (default) to 20.0 (strong avoidance)
 
     async def progress(step, pct):
         if on_progress:
@@ -265,7 +200,7 @@ async def generate_routes(
     await progress("Computing reachable area", 10)
 
     # Step 1: Get isochrone
-    iso, shrink_factor, init_bearing = await ors_client.get_isochrone(
+    iso, shrink_factor, init_bearing = await valhalla_client.get_isochrone(
         source, target_distance / 2, mode
     )
     logger.info(f"Isochrone obtained, shrink={shrink_factor:.2f}, bearing={init_bearing:.0f}")
@@ -285,7 +220,7 @@ async def generate_routes(
     )
     logger.info(f"Generated {len(polygon_list)} candidate polygons")
 
-    await progress("Fetching routes from OpenRouteService", 30)
+    await progress("Fetching routes from Valhalla", 30)
 
     # Step 3: Fetch routes using BOTH methods for diversity
     sol_list = []
@@ -293,30 +228,21 @@ async def generate_routes(
     # 3a: Polygon method (if we got polygons)
     if len(polygon_list) > 0:
         polygon_sols = await _fetch_polygon_routes(
-            ors_client, polygon_list, polygon_points, mode,
-            remove_backtracks, weight, surface, green, height
+            valhalla_client, polygon_list, polygon_points, mode,
+            remove_backtracks, weight, surface, height,
+            use_hills=use_hills, crossing_cost=crossing_cost,
         )
         sol_list.extend(polygon_sols)
         logger.info(f"Polygon method produced {len(polygon_sols)} routes")
 
-    await progress("Fetching diverse alternatives", 45)
-
-    # 3b: ORS round_trip with multiple seeds
-    num_seeds = max(3, iterations + 2)
-    round_trip_sols = await _fetch_round_trip_routes(
-        ors_client, source, target_distance, mode,
-        num_seeds, weight, surface, green, height
-    )
-    sol_list.extend(round_trip_sols)
-    logger.info(f"Round trip method produced {len(round_trip_sols)} routes")
-
     await progress("Exploring all directions", 55)
 
-    # 3c: Directional routes — ensures candidates cover all compass directions
+    # 3b: Directional routes — ensures candidates cover all compass directions
     # so different terrain (hilly vs flat areas) is represented in the pool
     directional_sols = await _fetch_directional_routes(
-        ors_client, source, target_distance, mode,
-        weight, surface, green, height
+        valhalla_client, source, target_distance, mode,
+        weight, surface, height,
+        use_hills=use_hills, crossing_cost=crossing_cost,
     )
     sol_list.extend(directional_sols)
     logger.info(f"Directional method produced {len(directional_sols)} routes")
@@ -342,7 +268,7 @@ async def generate_routes(
             )
 
             seg_metrics = graph.compute_segment_metrics(
-                segments, coords_to_num, weight, height, surface, green
+                segments, coords_to_num, weight, height, surface
             )
 
             # Convert solutions to smooth graph vertex sequences
@@ -398,7 +324,7 @@ async def generate_routes(
         if len(route) < 3:
             continue
         try:
-            metrics = scoring.compute_route_metrics(route, weight, height, surface, green)
+            metrics = scoring.compute_route_metrics(route, weight, height, surface)
             score = scoring.score_route(metrics, target_distance, preferences)
             scored.append({**sol, "metrics": metrics, "score": score})
         except Exception as e:

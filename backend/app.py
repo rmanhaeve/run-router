@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from models import GenerateRequest
-from engine.ors_client import ORSClient
+from engine.valhalla_client import ValhallaClient
 from engine.generator import generate_routes
 
 logging.basicConfig(level=logging.INFO)
@@ -35,27 +35,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ORS_KEY = os.environ.get("ORS_API_KEY", "")
+VALHALLA_URL = os.environ.get("VALHALLA_URL", "http://localhost:8002")
 
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "has_api_key": bool(ORS_KEY)}
+    return {"status": "ok", "valhalla_url": VALHALLA_URL}
 
 
 @app.post("/api/generate")
 async def generate(req: GenerateRequest):
-    if not ORS_KEY:
-        raise HTTPException(500, "ORS_API_KEY not configured")
-
-    client = ORSClient(ORS_KEY)
+    client = ValhallaClient(VALHALLA_URL)
     try:
         result = await generate_routes(
             source=req.start,
             target_distance=req.distance_m,
             mode=req.mode,
             preferences=req.preferences.model_dump(),
-            ors_client=client,
+            valhalla_client=client,
             algorithm=req.algorithm,
             iterations=req.iterations,
         )
@@ -70,8 +67,6 @@ async def generate(req: GenerateRequest):
 @app.post("/api/generate-stream")
 async def generate_stream(req: GenerateRequest):
     """SSE endpoint for route generation with progress updates."""
-    if not ORS_KEY:
-        raise HTTPException(500, "ORS_API_KEY not configured")
 
     async def event_stream():
         progress_queue = asyncio.Queue()
@@ -80,14 +75,14 @@ async def generate_stream(req: GenerateRequest):
             await progress_queue.put({"type": "progress", "step": step, "pct": pct})
 
         async def run_generation():
-            client = ORSClient(ORS_KEY)
+            client = ValhallaClient(VALHALLA_URL)
             try:
                 result = await generate_routes(
                     source=req.start,
                     target_distance=req.distance_m,
                     mode=req.mode,
                     preferences=req.preferences.model_dump(),
-                    ors_client=client,
+                    valhalla_client=client,
                     algorithm=req.algorithm,
                     iterations=req.iterations,
                     on_progress=on_progress,

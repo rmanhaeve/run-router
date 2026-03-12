@@ -33,16 +33,16 @@ def get_euclidean_perimeter(coords):
 
 def gps_crow_dist(u, v, height_u=0, height_v=0):
     """Haversine distance between two (lon, lat) points, accounting for elevation."""
-    x1 = math.radians(u[0])
-    y1 = math.radians(u[1])
-    x2 = math.radians(v[0])
-    y2 = math.radians(v[1])
+    lon1 = math.radians(u[0])
+    lat1 = math.radians(u[1])
+    lon2 = math.radians(v[0])
+    lat2 = math.radians(v[1])
     dist = (
         2
         * math.asin(
             math.sqrt(
-                math.sin((x2 - x1) / 2) ** 2
-                + math.cos(x1) * math.cos(x2) * math.sin((y2 - y1) / 2) ** 2
+                math.sin((lat2 - lat1) / 2) ** 2
+                + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
             )
         )
         * 6378137.000

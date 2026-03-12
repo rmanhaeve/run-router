@@ -10,9 +10,10 @@ import type { Route } from "../types";
 
 interface Props {
   route: Route;
+  onHover?: (index: number | null) => void;
 }
 
-export default function ElevationProfile({ route }: Props) {
+export default function ElevationProfile({ route, onHover }: Props) {
   const data = route.elevation_profile.map((pt) => ({
     distance: Math.round(pt.distance),
     elevation: pt.elevation,
@@ -65,7 +66,11 @@ export default function ElevationProfile({ route }: Props) {
 
       <div className="flex-1">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data}>
+          <AreaChart
+            data={data}
+            onMouseMove={(e) => onHover?.(e.activeTooltipIndex ?? null)}
+            onMouseLeave={() => onHover?.(null)}
+          >
             <XAxis
               dataKey="distance"
               tickFormatter={(v) => `${(v / 1000).toFixed(1)}km`}
