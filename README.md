@@ -1,6 +1,6 @@
 # Circular Route Generator
 
-A web-based tool for generating circular (round-trip) routes of a target distance from a chosen start location. Configure preferences for terrain, surface type, route overlap, and green space, then pick from multiple scored suggestions.
+A web-based tool for generating circular (round-trip) routes of a target distance from a chosen start location. Configure preferences for terrain, surface type, route overlap, and road crossings, then pick from multiple scored suggestions.
 
 ## Based on
 
@@ -23,30 +23,41 @@ Redistribution and use of this source code, with or without modification, are pe
 
 - Click-to-set start location on an interactive map
 - Target distance from 1 to 50 km
-- Walking, cycling, or driving modes
-- Preference sliders: flat/hilly, paved/offroad, overlap tolerance, green space
+- Walking and cycling modes
+- Preference controls: flat/hilly terrain, paved/offroad surface, overlap tolerance, road crossing avoidance
 - Multiple route suggestions ranked by preference score (Pareto front)
 - Elevation profile with surface type overlay
 - GPX export
 
 ## Data sources
 
-All routing data comes from [OpenRouteService](https://openrouteservice.org/) (built on [OpenStreetMap](https://www.openstreetmap.org/)):
+All routing data comes from a self-hosted [Valhalla](https://github.com/valhalla/valhalla) instance (built on [OpenStreetMap](https://www.openstreetmap.org/)):
 
 | Data | Source |
 |------|--------|
-| Road network & routing | ORS Directions API |
-| Reachable area | ORS Isochrone API |
-| Elevation | ORS (SRTM) |
-| Surface type | ORS `extra_info=surface` (OSM tags) |
-| Green space | ORS `extra_info=green` (OSM land use) |
+| Road network & routing | Valhalla `/route` API |
+| Reachable area | Valhalla `/isochrone` API |
+| Elevation | Valhalla `/height` API (SRTM) |
+| Surface type | Valhalla maneuver `unpaved` attribute |
 
 ## Setup
+
+### Prerequisites
+
+You need a running Valhalla instance loaded with an OSM extract for your area. The easiest way:
+
+```bash
+docker run -p 8002:8002 \
+  -v $PWD/valhalla_tiles:/custom_files \
+  ghcr.io/gis-ops/docker-valhalla/valhalla:latest
+```
+
+See [gis-ops/docker-valhalla](https://github.com/gis-ops/docker-valhalla) for instructions on loading an OSM extract.
 
 ### Docker (recommended)
 
 ```bash
-ORS_API_KEY="your-key-here" docker compose up --build
+VALHALLA_URL="http://your-valhalla-host:8002" docker compose up --build
 ```
 
 Open http://localhost:8000.
@@ -55,7 +66,7 @@ Open http://localhost:8000.
 
 - Python 3.10+, [uv](https://docs.astral.sh/uv/)
 - Node.js 18+
-- An OpenRouteService API key (free at https://openrouteservice.org/dev/#/signup)
+- A running Valhalla instance (default: `http://localhost:8002`)
 
 ### Backend
 
@@ -63,7 +74,7 @@ Open http://localhost:8000.
 cd backend
 uv venv
 uv pip install -r requirements.txt
-export ORS_API_KEY="your-key-here"
+export VALHALLA_URL="http://localhost:8002"
 .venv/bin/uvicorn app:app --reload
 ```
 
@@ -81,23 +92,24 @@ Open http://localhost:5173 (Vite dev server proxies `/api` to the backend).
 
 ```
 backend/
-  app.py              FastAPI server
-  models.py           Request/response models
+  app.py                FastAPI server
+  models.py             Request/response models
   engine/
-    generator.py      Route generation orchestrator
-    ors_client.py     Async OpenRouteService API client
-    graph.py          Smooth graph construction & Pareto optimization
-    scoring.py        Multi-preference route scoring
-    polygons.py       Ellipse/polygon geometry
-    distance.py       Haversine distance utilities
+    generator.py        Route generation orchestrator
+    valhalla_client.py  Async Valhalla API client
+    graph.py            Smooth graph construction & Pareto optimization
+    scoring.py          Multi-preference route scoring
+    local_search.py     Multi-objective local search
+    polygons.py         Ellipse/polygon geometry
+    distance.py         Haversine distance utilities
 
 frontend/
   src/
-    App.tsx           Main app layout
-    api.ts            Backend API client (SSE streaming)
+    App.tsx             Main app layout
+    api.ts              Backend API client (SSE streaming)
     components/
-      Map.tsx         Leaflet map with route display
-      Controls.tsx    Distance, mode & preference controls
-      RouteList.tsx   Scored route list with GPX export
+      Map.tsx           Leaflet map with route display
+      Controls.tsx      Distance, mode & preference controls
+      RouteList.tsx     Scored route list with GPX export
       ElevationProfile.tsx  Elevation chart (Recharts)
 ```
