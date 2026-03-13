@@ -217,6 +217,9 @@ class ValhallaClient:
                     route[i], route[i + 1], h1, h2
                 )
 
+        # wp_indices: [start, end_of_leg0, end_of_leg1, ...]
+        wp_indices = wp_shape_indices
+
         # Force-close round trips: Valhalla snaps the start and end locations to
         # the nearest road nodes, which may differ by a few metres even when the
         # same GPS coordinate was passed for both. Without this, route[0] != route[-1]
@@ -234,8 +237,6 @@ class ValhallaClient:
             route.append(route[0])
             wp_indices[-1] = len(route) - 1
 
-        # wp_indices: [start, end_of_leg0, end_of_leg1, ...]
-        wp_indices = wp_shape_indices
         waypoints = [route[i] for i in wp_indices[:-1]]
 
         return route, waypoints, wp_indices
