@@ -290,8 +290,8 @@ def multi_objective_local_search(
                     new_length, new_climb, new_unpaved, new_paved, overlap_pct
                 )
                 pref_score = scoring.score_route_preferences(metrics, preferences)
-                length_error = abs(metrics["length"] - target_distance)
-                new_cost = [length_error, -pref_score]
+                length_error_pct = abs(metrics["length"] - target_distance) / target_distance * 100 if target_distance > 0 else 0
+                new_cost = [length_error_pct, -pref_score]
 
                 archive, archive_costs = _update_archive(
                     archive, archive_costs, new_cost, new_C, visited
@@ -323,8 +323,8 @@ def multi_objective_local_search(
                         overlap_pct,
                     )
                     pref_score = scoring.score_route_preferences(metrics, preferences)
-                    length_error = abs(metrics["length"] - target_distance)
-                    new_cost = [length_error, -pref_score]
+                    length_error_pct = abs(metrics["length"] - target_distance) / target_distance * 100 if target_distance > 0 else 0
+                    new_cost = [length_error_pct, -pref_score]
 
                     archive, archive_costs = _update_archive(
                         archive, archive_costs, new_cost, new_C, visited

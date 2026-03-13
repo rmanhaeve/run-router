@@ -217,6 +217,23 @@ class ValhallaClient:
                     route[i], route[i + 1], h1, h2
                 )
 
+        # Force-close round trips: Valhalla snaps the start and end locations to
+        # the nearest road nodes, which may differ by a few metres even when the
+        # same GPS coordinate was passed for both. Without this, route[0] != route[-1]
+        # and the route is excluded from the local-search circular-route pool.
+        first_in, last_in = coords[0], coords[-1]
+        is_round_trip = (abs(first_in[0] - last_in[0]) < 1e-6 and
+                         abs(first_in[1] - last_in[1]) < 1e-6)
+        if is_round_trip and len(route) > 1 and route[0] != route[-1]:
+            if weight is not None:
+                h1 = height.get(route[-1], 0) if height else 0
+                h2 = height.get(route[0], 0) if height else 0
+                weight[(route[-1], route[0])] = distance.gps_crow_dist(
+                    route[-1], route[0], h1, h2
+                )
+            route.append(route[0])
+            wp_indices[-1] = len(route) - 1
+
         # wp_indices: [start, end_of_leg0, end_of_leg1, ...]
         wp_indices = wp_shape_indices
         waypoints = [route[i] for i in wp_indices[:-1]]
