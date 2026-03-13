@@ -124,18 +124,23 @@ def _waypoint_at_bearing(source, bearing_deg, dist_meters):
 
 async def _fetch_directional_routes(valhalla_client, source, target_distance, mode,
                                      weight, surface, height,
-                                     bearings=None, use_hills=0.5, crossing_cost=2.0):
+                                     bearings=None, use_hills=0.5, crossing_cost=2.0,
+                                     shrink_factor=0.6):
     """Generate routes by placing waypoints in specific compass directions.
 
-    For each bearing, creates a waypoint at ~1/4 target distance in that direction,
-    then requests a route: source -> waypoint -> source. This ensures candidate
-    routes explore different geographic areas with potentially different terrain.
+    Waypoint distance is calibrated using shrink_factor (the ratio of crow-fly to
+    road distance from the isochrone) so that the round trip is approximately
+    target_distance: wp_dist = target_distance * shrink_factor / 2, which gives
+    a road distance of (wp_dist / shrink_factor) * 2 = target_distance each way.
     """
     if bearings is None:
         bearings = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330]
 
     sol_list = []
-    wp_dist = target_distance / 4  # waypoint at 1/4 total distance from start
+    # Place waypoint so the round trip road distance ≈ target_distance.
+    # crow-fly to waypoint = road_distance_to_wp * shrink_factor
+    # road_distance_to_wp = target_distance / 2  →  wp_dist = target_distance * shrink_factor / 2
+    wp_dist = target_distance * shrink_factor / 2
 
     for bearing in bearings:
         wp = _waypoint_at_bearing(source, bearing, wp_dist)
@@ -188,8 +193,10 @@ async def generate_routes(
     surface = {}
     height = {}
 
-    # Derive Valhalla costing parameters from preferences
-    use_hills = preferences.get("hilly", 50) / 100  # 0.0–1.0
+    # Derive Valhalla costing parameters from preferences.
+    # use_hills: 0.0 = hills not penalised (neutral), 1.0 = hills strongly avoided (flat).
+    # So flat preference (hilly=0) → use_hills=1.0, hilly preference (hilly=100) → use_hills=0.0.
+    use_hills = 1.0 - preferences.get("hilly", 50) / 100
     crossings_pref = preferences.get("crossings", 0)
     crossing_cost = 2.0 + (crossings_pref / 100) * 18.0  # 2.0 (default) to 20.0 (strong avoidance)
 
@@ -243,6 +250,7 @@ async def generate_routes(
         valhalla_client, source, target_distance, mode,
         weight, surface, height,
         use_hills=use_hills, crossing_cost=crossing_cost,
+        shrink_factor=shrink_factor,
     )
     sol_list.extend(directional_sols)
     logger.info(f"Directional method produced {len(directional_sols)} routes")

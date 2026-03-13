@@ -1,8 +1,8 @@
 """Valhalla API client — async wrapper for directions and isochrones.
 
 Valhalla costing options used:
-  pedestrian: use_hills (0=avoid hills, 1=prefer hills), crossing_cost (road crossing penalty)
-  bicycle: use_hills (0=avoid hills, 1=prefer hills)
+  pedestrian: use_hills (0=no hill penalty/neutral, 1=strongly avoid hills/flat), crossing_cost (road crossing penalty)
+  bicycle: use_hills (0=no hill penalty/neutral, 1=strongly avoid hills/flat)
 """
 
 import httpx
