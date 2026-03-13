@@ -70,15 +70,16 @@ def _deduplicate_routes(sol_list, threshold=0.85):
     return kept
 
 
-async def _fetch_polygon_routes(valhalla_client, polygon_list, polygon_points, mode,
+async def _fetch_polygon_routes(valhalla_client, source, polygon_list, polygon_points, mode,
                                  remove_backtracks, weight, surface, height,
                                  use_hills=0.5, crossing_cost=2.0):
     """Fetch routes using the isochrone-polygon method. Returns list of solution dicts."""
     sol_list = []
 
     for poly in polygon_list:
-        coords = list(copy.deepcopy(poly["estimated_wps"]))
-        coords.append(coords[0])  # close the loop
+        # Anchor at source so all candidates share the same start/end vertex,
+        # which is required for the smooth graph (vertex 0 = source).
+        coords = [source] + list(copy.deepcopy(poly["estimated_wps"])) + [source]
 
         try:
             route, wps, wp_indices = await valhalla_client.get_directions(
@@ -235,7 +236,7 @@ async def generate_routes(
     # 3a: Polygon method (if we got polygons)
     if len(polygon_list) > 0:
         polygon_sols = await _fetch_polygon_routes(
-            valhalla_client, polygon_list, polygon_points, mode,
+            valhalla_client, source, polygon_list, polygon_points, mode,
             remove_backtracks, weight, surface, height,
             use_hills=use_hills, crossing_cost=crossing_cost,
         )
@@ -279,17 +280,22 @@ async def generate_routes(
                 segments, coords_to_num, weight, height, surface
             )
 
-            # Convert solutions to smooth graph vertex sequences
+            # Convert solutions to smooth graph vertex sequences.
+            # All routes are source-anchored, so route[0] == route[-1] == source,
+            # and coords_to_num[source] == 0 (vertex 0 in the smooth graph).
             initial_smooth = []
             for route in valid_routes:
-                sol_smooth = [0]  # source is always vertex 0
+                start_num = coords_to_num.get(route[0])
+                if start_num is None:
+                    continue
+                sol_smooth = [start_num]
                 for j in range(1, len(route)):
                     pt = route[j]
                     if pt in coords_to_num:
                         num = coords_to_num[pt]
                         if sol_smooth[-1] != num:
                             sol_smooth.append(num)
-                if len(sol_smooth) >= 3 and sol_smooth[-1] == 0:
+                if len(sol_smooth) >= 3 and sol_smooth[-1] == start_num:
                     initial_smooth.append(sol_smooth)
 
             if initial_smooth:

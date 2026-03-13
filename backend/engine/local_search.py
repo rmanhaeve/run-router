@@ -217,7 +217,9 @@ def multi_objective_local_search(
     logger.info(f"Local search: initial archive size = {len(archive)}")
 
     iteration = 0
-    max_iterations = max(len(archive) * 5, 30)
+    max_iterations = max(len(archive) * 20, 100)
+    passes_without_growth = 0
+    archive_size_at_pass_start = len(archive)
 
     while iteration < max_iterations:
         # Find an unvisited solution
@@ -228,7 +230,18 @@ def multi_objective_local_search(
                 break
 
         if unvisited_idx is None:
-            break  # Converged
+            # Completed a full pass over all archive members.
+            # BFS positions are randomised, so fresh passes may find different paths.
+            # Stop only after 2 consecutive passes with no archive growth.
+            if len(archive) > archive_size_at_pass_start:
+                passes_without_growth = 0
+            else:
+                passes_without_growth += 1
+            if passes_without_growth >= 2:
+                break
+            archive_size_at_pass_start = len(archive)
+            visited.clear()
+            continue
 
         visited.add(unvisited_idx)
         C = archive[unvisited_idx]
